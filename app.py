@@ -1,7 +1,7 @@
 import os
 import cv2
 import base64
-from flask import Flask, render_template, request, jsonify, send_from_directory
+from flask import Flask, render_template, request, jsonify, send_from_directory, redirect
 from flask_cors import CORS
 from flask_sqlalchemy import SQLAlchemy
 from ultralytics import YOLO
@@ -31,7 +31,6 @@ def log_request_info():
     print(f"📥 Request: {request.method} {request.path} from {request.remote_addr}")
 
 # Database Configuration
-# Railway provides DATABASE_URL environment variable
 db_url = os.getenv('DATABASE_URL', 'sqlite:///wood_defects.db')
 if db_url and db_url.startswith("postgres://"):
     db_url = db_url.replace("postgres://", "postgresql://", 1)
@@ -88,7 +87,6 @@ def process_image(img_path):
                 "bbox": xyxy
             })
             
-            # Draw for display
             x1, y1, x2, y2 = map(int, xyxy)
             cv2.rectangle(img, (x1, y1), (x2, y2), (0, 255, 0), 2)
             cv2.putText(img, name, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
@@ -124,6 +122,9 @@ def index():
                 <input type="file" name="file" accept="image/*" required><br>
                 <button type="submit">Analyze Image</button>
             </form>
+            <hr style="margin: 30px 0; border: 0; border-top: 1px solid #3a3f55;">
+            <p>Ready to go mobile?</p>
+            <a href="/download" style="display: inline-block; background: #00E5FF; color: black; text-decoration: none; padding: 12px 25px; border-radius: 10px; font-weight: bold;">Download Mobile App (APK)</a>
         </div>
     </body>
     </html>
@@ -138,7 +139,6 @@ def predict():
     file.save(img_path)
     detections, proc_name = process_image(img_path)
     
-    # Return HTML for browser testing
     detections_html = "".join([f"<li><b>{d['name']}</b>: {d['confidence']}</li>" for d in detections])
     return f"""
     <!DOCTYPE html>
@@ -170,19 +170,15 @@ def predict():
 
 @app.route('/api/predict', methods=['POST'])
 def api_predict():
-    """Endpoint for Mobile App (Flutter)"""
     if 'image' not in request.files:
-        print("❌ No image provided in request")
         return jsonify({"success": False, "message": "No image provided"}), 400
     
     file = request.files['image']
     img_path = Path(UPLOAD_FOLDER) / f"mobile_{file.filename}"
     file.save(img_path)
-    print(f"📸 Received image: {file.filename}")
     
     img = cv2.imread(str(img_path))
     if img is None:
-        print(f"❌ Failed to read image: {img_path}")
         return jsonify({"success": False, "message": "Invalid image data"}), 400
 
     results = model.predict(img, conf=0.25, verbose=False)
@@ -194,34 +190,33 @@ def api_predict():
                 cls_id = int(box.cls[0])
                 conf = float(box.conf[0])
                 xyxy = box.xyxy[0].tolist()
+                
+                name = CONFIG["class_names_ar"][cls_id] if cls_id < len(CONFIG["class_names_ar"]) else f"Unknown ({cls_id})"
+                
                 final_results.append({
                     "class_id": cls_id,
-                    "name": CONFIG["class_names_ar"][cls_id],
+                    "name": name,
                     "confidence": round(conf, 4),
                     "box": {"x1": round(xyxy[0], 2), "y1": round(xyxy[1], 2), "x2": round(xyxy[2], 2), "y2": round(xyxy[3], 2)}
                 })
+                
+                x1, y1, x2, y2 = map(int, xyxy)
+                cv2.rectangle(img, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                cv2.putText(img, name, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
     
-    print(f"🔍 Detections: {len(final_results)}")
-    
-    # Save to Database
-    status = 'rejected' if len(final_results) > 0 else 'passed'
-    defect_name = final_results[0]['name'] if len(final_results) > 0 else 'None'
-    conf = final_results[0]['confidence'] if len(final_results) > 0 else 100.0
-    
-    # Read image as base64 for database storage
-    with open(img_path, "rb") as image_file:
-        encoded_string = base64.b64encode(image_file.read()).decode('utf-8')
+    _, buffer = cv2.imencode('.jpg', img)
+    encoded_string = base64.b64encode(buffer).decode('utf-8')
     
     import datetime
     record_id = f"#{db.session.query(ProductRecord).count() + 1}"
     new_record = ProductRecord(
         id=record_id,
         image_base64=encoded_string,
-        status=status,
-        confidence=conf,
-        defect_type=defect_name,
-        buyer="Global Tech", # Placeholder
-        shipping="DHL",      # Placeholder
+        status='rejected' if len(final_results) > 0 else 'passed',
+        confidence=final_results[0]['confidence'] if len(final_results) > 0 else 100.0,
+        defect_type=final_results[0]['name'] if len(final_results) > 0 else 'None',
+        buyer="Global Tech",
+        shipping="DHL",
         inspected_at=datetime.datetime.now().isoformat()
     )
     db.session.add(new_record)
@@ -230,45 +225,33 @@ def api_predict():
     return jsonify({
         "success": True, 
         "data": final_results,
-        "record_id": record_id
+        "record_id": record_id,
+        "processed_image_base64": encoded_string
     })
 
 @app.errorhandler(Exception)
 def handle_exception(e):
-    # Log the error
-    print(f"🔥 Internal Error: {e}")
     return jsonify({"success": False, "message": str(e)}), 500
 
 @app.route('/api/signup', methods=['POST'])
 def api_signup():
     try:
         data = request.get_json(silent=True)
-        if not data:
-            return jsonify({"success": False, "message": "No JSON data received"}), 400
-            
         factory_name = data.get('factory_name')
         password = data.get('password')
-        
-        print(f"📝 Attempting signup for: {factory_name}")
-        
         if UserRecord.query.filter_by(factory_name=factory_name).first():
             return jsonify({"success": False, "message": "Factory already exists"}), 400
-        
         new_user = UserRecord(factory_name=factory_name, password=password)
         db.session.add(new_user)
         db.session.commit()
         return jsonify({"success": True, "message": "User created successfully"})
     except Exception as e:
-        print(f"❌ Signup Error: {e}")
         return jsonify({"success": False, "message": str(e)}), 500
 
 @app.route('/api/login', methods=['POST'])
 def api_login():
     data = request.json
-    factory_name = data.get('factory_name')
-    password = data.get('password')
-    
-    user = UserRecord.query.filter_by(factory_name=factory_name, password=password).first()
+    user = UserRecord.query.filter_by(factory_name=data.get('factory_name'), password=data.get('password')).first()
     if user:
         return jsonify({"success": True, "factory_name": user.factory_name})
     return jsonify({"success": False, "message": "Invalid credentials"}), 401
@@ -277,5 +260,11 @@ def api_login():
 def uploaded_file(filename):
     return send_from_directory(UPLOAD_FOLDER, filename)
 
+@app.route('/download')
+def download_app():
+    github_release_url = "https://github.com/mvrivmkhvled55-crypto/NexQA/releases/download/NexQA/nexqa.apk"
+    return redirect(github_release_url)
+
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5001, debug=False)
+    port = int(os.environ.get("PORT", 5001))
+    app.run(host='0.0.0.0', port=port, debug=False)
