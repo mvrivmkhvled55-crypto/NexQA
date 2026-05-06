@@ -1,7 +1,7 @@
 import os
 import cv2
 import base64
-from flask import Flask, render_template, request, jsonify, send_from_directory, redirect
+from flask import Flask, render_template, request, jsonify, send_from_directory
 from flask_cors import CORS
 from flask_sqlalchemy import SQLAlchemy
 from ultralytics import YOLO
@@ -124,9 +124,6 @@ def index():
                 <input type="file" name="file" accept="image/*" required><br>
                 <button type="submit">Analyze Image</button>
             </form>
-            <hr style="margin: 30px 0; border: 0; border-top: 1px solid #3a3f55;">
-            <p>Ready to go mobile?</p>
-            <a href="/download" style="display: inline-block; background: #00E5FF; color: black; text-decoration: none; padding: 12px 25px; border-radius: 10px; font-weight: bold;">Download Mobile App (APK)</a>
         </div>
     </body>
     </html>
@@ -280,13 +277,5 @@ def api_login():
 def uploaded_file(filename):
     return send_from_directory(UPLOAD_FOLDER, filename)
 
-@app.route('/download')
-def download_app():
-    # Redirect to the actual GitHub Release asset
-    github_release_url = "https://github.com/mvrivmkhvled55-crypto/NexQA/releases/download/NexQA/nexqa.apk"
-    return redirect(github_release_url)
-
 if __name__ == '__main__':
-    # Use environment port for Railway/Render, fallback to 5001
-    port = int(os.environ.get("PORT", 5001))
-    app.run(host='0.0.0.0', port=port, debug=False)
+    app.run(host='0.0.0.0', port=5001, debug=False)
