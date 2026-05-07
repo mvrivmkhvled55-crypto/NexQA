@@ -262,7 +262,7 @@ def uploaded_file(filename):
 
 @app.route('/download')
 def download_app():
-    github_release_url = "https://github.com/mvrivmkhvled55-crypto/NexQA/releases/download/NexQA/nexqa.apk"
+    github_release_url = "https://github.com/mvrivmkhvled55-crypto/NexQA/releases/download/NexQA/app-release.apk"
     return redirect(github_release_url)
 
 if __name__ == '__main__':
